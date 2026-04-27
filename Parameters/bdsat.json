@@ -1,0 +1,41 @@
+{
+  "metadata": {
+    "latitude_deg": 23.999324,
+    "longitude_deg": 90.389147,
+    "altitude_m": 0.0,
+    "frequency_GHz": 18.0,
+    "elevation_deg": 45.0,
+    "polarization": "V"
+  },
+  "itu_p838": {
+    "k_V": 0.07235708,
+    "alpha_V": 1.06070288,
+    "k_H": 0.07550311,
+    "alpha_H": 1.02109575
+  },
+  "itu_p837": {
+    "R_001_mmh": 102.377887
+  },
+  "itu_p839": {
+    "h_0_km": 4.90876,
+    "h_R_km": 5.26876
+  },
+  "itu_optional": {
+    "A_gas_dB": 0.0,
+    "A_cloud_dB": 2.2061,
+    "A_scint_dB": 0.9106,
+    "computed": true
+  },
+  "matlab_ready": {
+    "k_V": 0.07235708,
+    "alpha_V": 1.06070288,
+    "k_H": 0.07550311,
+    "alpha_H": 1.02109575,
+    "R_001_mmh": 102.377887,
+    "h_0_km": 4.90876,
+    "h_R_km": 5.26876,
+    "A_gas_dB": 0.0,
+    "A_cloud_dB": 2.2061,
+    "A_scint_dB": 0.9106
+  }
+}

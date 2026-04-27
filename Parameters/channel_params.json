@@ -1,0 +1,55 @@
+{
+  "location": {
+    "latitude_deg": 23.999324,
+    "longitude_deg": 90.389147,
+    "altitude_m": 0.0
+  },
+  "link": {
+    "frequency_GHz": 20.0,
+    "elevation_deg": 45.0,
+    "polarization": "V"
+  },
+  "itu_p837": {
+    "R_001_mmh": 102.3779
+  },
+  "itu_p839": {
+    "rain_height_km": 5.2688
+  },
+  "itu_p838": {
+    "k_selected": 0.094994,
+    "alpha_selected": 1.002077,
+    "gamma_R_dB_km": 9.819234
+  },
+  "itu_p618_rain": {
+    "A_001_dB": 41.4493,
+    "p_exceedance_pct": 0.01,
+    "A_p_dB": 1.133,
+    "p_instantaneous_pct": 6.8725
+  },
+  "itu_p676_gas": {
+    "A_gaseous_dB": 0.0
+  },
+  "itu_p840_cloud": {
+    "A_cloud_dB": 2.7033
+  },
+  "itu_p618_scint": {
+    "A_scintillation_dB": 0.9651,
+    "D_antenna_m": 1.0,
+    "eta_antenna": 0.6
+  },
+  "total": {
+    "A_total_dB": 45.1177
+  },
+  "matlab_ready": {
+    "RainfallRate": 102.3779,
+    "IsoHeight_km": 5.2688,
+    "k": 0.094994,
+    "alpha": 1.002077,
+    "A_001_dB": 41.4493,
+    "A_p_dB": 1.133,
+    "A_gas_dB": 0.0,
+    "A_cloud_dB": 2.7033,
+    "A_scint_dB": 0.9651,
+    "A_total_dB": 45.1177
+  }
+}

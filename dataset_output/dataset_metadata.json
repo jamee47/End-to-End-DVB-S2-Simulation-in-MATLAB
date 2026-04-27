@@ -1,0 +1,1 @@
+{"num_pilot_blocks":5,"num_features":6,"feature_names":["Re_y","Re_p","Re_hLS","Im_y","Im_p","Im_hLS"],"label_names":["label_Re_hk","label_Im_hk"],"reshape_note":"X = df[feature_cols].values.reshape(-1, 5, 6)","total_rows":2}
