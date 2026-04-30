@@ -1,7 +1,6 @@
 function rxData = rx_dvbs2(txData, chData, cfg)
-% =========================================================================
+
 % RX_DVBS2 — DVB-S2 Receiver Module
-% =========================================================================
 % Performs matched filtering, pilot extraction, LS channel estimation,
 % equalization, demodulation, and computes BER and NMSE.
 %
@@ -31,9 +30,8 @@ function rxData = rx_dvbs2(txData, chData, cfg)
 %   rxData.rainAtten_dB   — rain attenuation applied
 % =========================================================================
 
-%% -----------------------------------------------------------------------
-%  STEP 1: Matched Filter + Downsample to Symbol Rate
-% -----------------------------------------------------------------------
+
+% Matched Filter + Downsample to Symbol Rate
 rxFilter = comm.RaisedCosineReceiveFilter( ...
     'RolloffFactor',         cfg.RolloffFactor, ...
     'FilterSpanInSymbols',   cfg.FilterSpanInSymbols, ...
@@ -53,9 +51,8 @@ txSymbols = txSymbols(1:minLen);
 
 totalSymbols = length(rxSymbols);
 
-%% -----------------------------------------------------------------------
-%  STEP 2: Pilot Block Detection and Extraction
-% -----------------------------------------------------------------------
+% Pilot Block Detection and Extraction
+
 % DVB-S2 Frame Structure (standard):
 %   PLHEADER    : 90 symbols  (SOF + PLSCODE)
 %   Data slot   : 90 symbols  (payload)
@@ -94,9 +91,8 @@ end
 
 fprintf('    [RX] Pilot blocks found: %d\n', numPilotBlocks);
 
-%% -----------------------------------------------------------------------
-%  STEP 3: LS Channel Estimation Per Pilot Block (Eq. 12)
-% -----------------------------------------------------------------------
+%  LS Channel Estimation Per Pilot Block (Eq. 12)
+
 % For each pilot block b:
 %   y_pilot = received pilot symbols  [36 x 1]
 %   p_pilot = known pilot symbols     [36 x 1] (all equal to p_known)
@@ -127,9 +123,7 @@ end
 % Frame-level h_LS: average across all pilot blocks
 h_LS_frame = mean(h_LS_perBlock);
 
-%% -----------------------------------------------------------------------
-%  STEP 4: Build X_in Feature Matrix (Eq. 33 from paper)
-% -----------------------------------------------------------------------
+
 % X_in = [ Re(y), Re(p), Re(h_LS), Im(y), Im(p), Im(h_LS) ]
 %
 % Dimensions: [numPilotBlocks x 6]
@@ -151,9 +145,7 @@ h_true = chData.h_true;
 Re_h_true = real(h_true) * ones(numPilotBlocks, 1);
 Im_h_true = imag(h_true) * ones(numPilotBlocks, 1);
 
-%% -----------------------------------------------------------------------
-%  STEP 5: Equalization and Demodulation
-% -----------------------------------------------------------------------
+
 % Equalize full received signal using frame-level h_LS
 rxEq_LS    = rxSymbols / h_LS_frame;
 rxEq_noEq  = rxSymbols;              % no equalization baseline
@@ -176,9 +168,8 @@ txB    = txB(1:minB);
 rxLS   = rxLS(1:minB);
 rxNoEq = rxNoEq(1:minB);
 
-%% -----------------------------------------------------------------------
-%  STEP 6: BER and NMSE Computation
-% -----------------------------------------------------------------------
+
+% BER and NMSE Computation
 % BER
 BER_LS   = sum(rxLS  ~= txB) / minB;
 BER_noEq = sum(rxNoEq ~= txB) / minB;
@@ -191,9 +182,7 @@ fprintf('    [RX] BER (LS)    = %.6f\n', BER_LS);
 fprintf('    [RX] BER (no eq) = %.6f\n', BER_noEq);
 fprintf('    [RX] NMSE (LS)   = %.6e\n', NMSE_LS);
 
-%% -----------------------------------------------------------------------
-%  Pack Output
-% -----------------------------------------------------------------------
+
 rxData.X_in           = X_in;
 rxData.h_LS_perBlock  = h_LS_perBlock;
 rxData.h_LS_frame     = h_LS_frame;

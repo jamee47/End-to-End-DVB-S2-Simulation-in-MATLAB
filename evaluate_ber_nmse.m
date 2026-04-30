@@ -42,9 +42,9 @@ for modIdx = 1:numMOD
     end
 end
 
-%% -----------------------------------------------------------------------
-%  PLOT 1: BER vs SNR
-% -----------------------------------------------------------------------
+
+%  BER vs SNR
+
 colors  = {'b','r','g'};
 markers = {'s','o','^'};
 
@@ -75,9 +75,8 @@ xlim([min(snrRange) max(snrRange)]);
 saveas(gcf, fullfile(cfg.OutputDir, 'BER_vs_SNR_LS.png'));
 fprintf('    [EVAL] Saved: BER_vs_SNR_LS.png\n');
 
-%% -----------------------------------------------------------------------
-%  PLOT 2: NMSE vs SNR
-% -----------------------------------------------------------------------
+
+%  PLOT 2: NMSE vs SNR-
 figure('Name','NMSE vs SNR — LS Channel Estimator', ...
     'Position',[950 100 700 480]);
 
@@ -99,9 +98,7 @@ legend('Location','northeast', 'FontSize', 10);
 saveas(gcf, fullfile(cfg.OutputDir, 'NMSE_vs_SNR_LS.png'));
 fprintf('    [EVAL] Saved: NMSE_vs_SNR_LS.png\n');
 
-%% -----------------------------------------------------------------------
-%  PRINT SUMMARY TABLE
-% -----------------------------------------------------------------------
+
 fprintf('\n========== BER/NMSE SUMMARY ==========\n');
 for modIdx = 1:numMOD
     fprintf('\nMODCOD: %s\n', cfg.MODCODNames{modIdx});
@@ -117,9 +114,7 @@ for modIdx = 1:numMOD
     end
 end
 
-%% -----------------------------------------------------------------------
-%  SAVE NUMERICAL RESULTS TO CSV
-% -----------------------------------------------------------------------
+
 for modIdx = 1:numMOD
     name = cfg.MODCODNames{modIdx};
     T = table(snrRange(:), ...

@@ -1,7 +1,5 @@
 function chData = channel_tropical(txData, cfg, snr_dB, itu)
-% =========================================================================
-% CHANNEL_TROPICAL — Tropical Satellite Fading Channel Module
-% =========================================================================
+
 % Implements the full channel model from Awad et al. (2023), Eq. 8-11:
 %
 %   h_k = h_tilde * sqrt(b) * sqrt(b_max)           (Eq. 11)
@@ -32,9 +30,7 @@ function chData = channel_tropical(txData, cfg, snr_dB, itu)
 %   chData.p_pct         — exceedance probability sampled (%)
 % =========================================================================
 
-%% -----------------------------------------------------------------------
-%  STEP 1: Validate itu struct fields (from load_itu_params.m)
-% -----------------------------------------------------------------------
+
 required = {'k_V','alpha_V','k_H','alpha_H','R_001','h_R_km'};
 for i = 1:length(required)
     if ~isfield(itu, required{i})
@@ -42,9 +38,7 @@ for i = 1:length(required)
     end
 end
 
-%% -----------------------------------------------------------------------
-%  STEP 2: Select polarization coefficients (ITU-R P.838)
-% -----------------------------------------------------------------------
+
 if isfield(cfg,'Polarization') && strcmpi(cfg.Polarization,'H')
     k_coef     = itu.k_H;
     alpha_coef = itu.alpha_H;
@@ -53,16 +47,11 @@ else
     alpha_coef = itu.alpha_V;
 end
 
-%% -----------------------------------------------------------------------
-%  STEP 3: Specific rain attenuation gamma_R  (ITU-R P.838)
-% -----------------------------------------------------------------------
 % gamma_R = k * R_001^alpha   (dB/km)
 gamma_R = k_coef * (itu.R_001 ^ alpha_coef);
 fprintf('    [CH] gamma_R = %.4f dB/km\n', gamma_R);
 
-%% -----------------------------------------------------------------------
-%  STEP 4: Total rain attenuation A_001  (ITU-R P.618)
-% -----------------------------------------------------------------------
+
 % Full path calculation following ITU-R P.618-13
 h_R       = itu.h_R_km;                 % rain height (km)
 h_s       = cfg.Altitude_m / 1000;      % station altitude (km)
@@ -105,9 +94,7 @@ end
 A_001 = gamma_R * L_E * v_001;
 fprintf('    [CH] A_001 = %.3f dB  (0.01%% exceedance)\n', A_001);
 
-%% -----------------------------------------------------------------------
-%  STEP 5: Instantaneous rain attenuation A_p  (ITU-R P.618 CDF scaling)
-% -----------------------------------------------------------------------
+
 % A_p = A_001 * (p/0.01)^C
 % C   = -(0.655 + 0.033*ln(p) - 0.045*ln(A_001) - 0.053*(1-p)*sin(el))
 % p sampled from [0.1%, 10%] — realistic operating range
@@ -123,9 +110,6 @@ A_p_dB = min(A_p_dB, 20.0);    % cap: link unusable beyond this
 
 fprintf('    [CH] A_p   = %.3f dB  (p = %.3f%% of year)\n', A_p_dB, p_pct);
 
-%% -----------------------------------------------------------------------
-%  STEP 6: b_max — Free space path loss factor  (Eq. 9)
-% -----------------------------------------------------------------------
 f_Hz   = f_GHz * 1e9;
 lambda = 3e8 / f_Hz;
 d0     = 35788e3;                        % GEO altitude (m)
@@ -134,9 +118,6 @@ k_b    = 1.38e-23;                       % Boltzmann constant
 
 b_max  = (lambda/(4*pi))^2 * (1/d0^2) * (G_R/(k_b * cfg.NoiseBW_Hz * cfg.NoiseTemp_K));
 
-%% -----------------------------------------------------------------------
-%  STEP 7: b — Satellite beam gain pattern  (Eq. 10)
-% -----------------------------------------------------------------------
 % b = G_s * [J1(u)/2u + 36*J3(u)/u^3]^2
 % u = 2.07123 * sin(theta_offset) / sin(theta_3dB)
 
@@ -154,9 +135,6 @@ b_beam = G_s * beam_pattern_sq;
 
 fprintf('    [CH] b_max = %.4e | b_beam = %.4e\n', b_max, b_beam);
 
-%% -----------------------------------------------------------------------
-%  STEP 8: h_tilde — Rain fading coefficient  (Eq. 8)
-% -----------------------------------------------------------------------
 % h_tilde = A_p^(1/2) * exp(-j*phi),   phi ~ Uniform(0, 2*pi)
 % Time-varying: resampled every frame call.
 
@@ -167,23 +145,18 @@ h_tilde = A_p_lin * exp(-1j * phi);
 fprintf('    [CH] |h_tilde| = %.6f  angle = %.4f rad\n', ...
     abs(h_tilde), angle(h_tilde));
 
-%% -----------------------------------------------------------------------
-%  STEP 9: h_k — Full channel coefficient  (Eq. 11)
-% -----------------------------------------------------------------------
-% h_k = h_tilde * sqrt(b) * sqrt(b_max)
+
 % Stored as h_true — this is the DL estimator training label.
 % Only h_tilde is applied to the waveform (b and b_max are in link budget).
 
 h_k = h_tilde * sqrt(b_beam) * sqrt(b_max);
 fprintf('    [CH] |h_k|     = %.4e\n', abs(h_k));
 
-%% -----------------------------------------------------------------------
-%  STEP 10: Apply h_tilde to waveform + add AWGN
-% -----------------------------------------------------------------------
+
 fadedWaveform = txData.waveform * h_tilde;
 rxWaveform    = awgn(fadedWaveform, snr_dB, 'measured');
 
-%% Pack output
+% Pack output
 chData.rxWaveform    = rxWaveform;
 chData.h_true        = h_k;
 chData.h_tilde       = h_tilde;
@@ -193,4 +166,6 @@ chData.rainAtten_dB  = A_p_dB;
 chData.A_001_dB      = A_001;
 chData.snr_dB        = snr_dB;
 chData.p_pct         = p_pct;
+
+
 end

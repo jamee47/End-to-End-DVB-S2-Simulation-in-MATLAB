@@ -6,11 +6,11 @@ clc; clearvars; close all;
 %           BLSTM and GRU channel estimators in Python.
 %
 % Structure:
-%    Configuration  (edit parameters here)
-%    Transmitter    (calls tx_dvbs2.m)
-%    Channel        (calls channel_tropical.m)
-%    Receiver       (calls rx_dvbs2.m)
-%    Dataset Export (saves CSV)
+%   Section 1 - Configuration  (edit parameters here)
+%   Section 2 - Transmitter    (calls tx_dvbs2.m)
+%   Section 3 - Channel        (calls channel_tropical.m)
+%   Section 4 - Receiver       (calls rx_dvbs2.m)
+%   Section 5 - Dataset Export (saves CSV)
 %
 % Paper Reference:
 %   Awad et al., "End-to-end DVB-S2X system design with DL-based channel
@@ -95,8 +95,8 @@ fprintf(' Frames: %d | Frame Type: %s | MODCODs: %d\n', ...
     cfg.NumFrames, cfg.FECFrame, length(cfg.MODCODs));
 fprintf('=============================================================\n\n');
 
-%%
-
+%% -----------------------------------------------------------------------
+%  SECTION 2-4: MAIN LOOP OVER MODCODs
 
 allResults = struct();
 
@@ -108,16 +108,16 @@ for modIdx = 1:length(cfg.MODCODs)
     fprintf('>>> Processing MODCOD %d (%s)...\n', ...
         cfg.CurrentMODCOD, cfg.CurrentMODCODName);
 
-    %%  TRANSMITTER
+    %% SECTION 2: TRANSMITTER
     fprintf('    [TX] Generating DVB-S2 waveform...\n');
     txData = tx_dvbs2(cfg);
 
-    %%  CHANNEL — Tropical High-Fading
+    %% SECTION 3: CHANNEL — Tropical High-Fading
     fprintf('    [CH] Applying tropical fading channel (SNR=%.0f dB)...\n', ...
         cfg.SNR_train_dB);
     chData = channel_tropical(txData, cfg, cfg.SNR_train_dB, itu);
 
-    %%  RECEIVER — Pilot Extraction + LS + BER/NMSE
+    %% SECTION 4: RECEIVER — Pilot Extraction + LS + BER/NMSE
     fprintf('    [RX] Extracting pilots, computing LS estimation...\n');
     rxData = rx_dvbs2(txData, chData, cfg);
 

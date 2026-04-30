@@ -91,4 +91,17 @@ txData.filterDelay     = filterDelay;
 fprintf('    [TX] Waveform length : %d samples\n', length(waveform));
 fprintf('    [TX] Total TX symbols: %d\n', totalSymbols);
 fprintf('    [TX] ~Symbols/frame  : %d\n', symbolsPerFrame);
+% Fs = 1e+06; 
+% spectrum = spectrumAnalyzer(SampleRate=Fs, AveragingMethod='exponential', ForgettingFactor=1);
+% spectrum(waveform);
+% release(spectrum);
+% 
+% % Constellation Diagram
+% constel = comm.ConstellationDiagram('ColorFading', true, ...
+%     'ShowTrajectory', 0, ...
+%     'SamplesPerSymbol', 4, ...
+%     'ShowReferenceConstellation', false);    
+% 
+% constel(waveform);
+% release(constel);
 end
