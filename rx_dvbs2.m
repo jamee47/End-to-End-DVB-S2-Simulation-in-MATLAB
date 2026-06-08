@@ -1,37 +1,56 @@
-function rxData = rx_dvbs2(txData, chData, cfg)
-
-% RX_DVBS2 — DVB-S2 Receiver Module
-% Performs matched filtering, pilot extraction, LS channel estimation,
-% equalization, demodulation, and computes BER and NMSE.
+function rxData = rx_dvbs2_frame(txData, chData, cfg, pilotPos)
+% =========================================================================
+% RX_DVBS2_FRAME — Receiver for ONE DVB-S2 frame
+% =========================================================================
+% Implements:
+%   - Matched filtering (SRRC)
+%   - LS channel estimation per pilot block (Eq. 12)
+%   - MMSE channel estimation per pilot block (Eq. 17)
+%   - Equalization by both estimators
+%   - Pre-FEC BER via QPSK symbol error rate on equalized symbols
+%   - NMSE per Eq. 32
+%   - X_in feature matrix per Eq. 33
 %
-% This module generates the INPUT VECTOR X_in for the BLSTM/GRU estimator
-% as defined in Eq. (33) of Awad et al. (2023):
+% NOTE on BER:
+%   MATLAB has no standalone dvbs2Receiver object. The paper's BER
+%   is the pre-FEC symbol error rate after equalization, mapped to
+%   bit errors assuming Gray-coded QPSK (2 bits/symbol).
+%   This is consistent with how simulation-based papers measure BER
+%   before the FEC coding gain is applied.
+%   BER = symbol_errors / total_symbols  (Gray-coded QPSK: 1 error/sym)
 %
-%   X_in = [ Re(y), Re(p), Re(h_LS), Im(y), Im(p), Im(h_LS) ]^T
-%
-% Where y = received pilot symbols, p = known pilot symbols, h_LS = LS estimate
-% Each pilot block contributes ONE row to the dataset.
+% NOTE on MMSE:
+%   For flat slow-fading (constant h within one frame):
+%   h_MMSE = W * h_LS,  W = R_hh / (R_hh + sigma_n2/Np)
+%   where R_hh = mean channel power, sigma_n2 = noise power per symbol,
+%   Np = 36 (pilot block averaging gain).
 %
 % INPUT:
-%   txData  — struct from tx_dvbs2.m
-%   chData  — struct from channel_tropical.m
-%   cfg     — configuration struct
+%   txData   — struct from tx_dvbs2_frame.m
+%   chData   — struct from channel_tropical.m
+%   cfg      — configuration struct
+%   pilotPos — pilot positions from detect_pilot_positions.m
 %
 % OUTPUT:
-%   rxData.X_in           — dataset matrix [NumPilotBlocks x 6] (Eq. 33)
-%   rxData.h_LS_perBlock  — LS estimate per pilot block [NumPilotBlocks x 1]
-%   rxData.h_true         — true channel coefficient (scalar)
-%   rxData.BER_LS         — BER after LS equalization
-%   rxData.BER_noEq       — BER without equalization
-%   rxData.NMSE_LS        — NMSE of LS estimator
-%   rxData.NumPilotBlocks — number of pilot blocks found
-%   rxData.snr_dB         — SNR used
-%   rxData.MODCOD         — MODCOD index
-%   rxData.rainAtten_dB   — rain attenuation applied
+%   rxData.X_in            — [numPilotBlocks x 6]  feature matrix
+%   rxData.h_LS_perBlock   — complex LS estimate per pilot block
+%   rxData.h_MMSE_perBlock — complex MMSE estimate per pilot block
+%   rxData.h_LS_frame      — frame-level LS  (mean over blocks)
+%   rxData.h_MMSE_frame    — frame-level MMSE (mean over blocks)
+%   rxData.BER_LS          — pre-FEC BER after LS equalization
+%   rxData.BER_MMSE        — pre-FEC BER after MMSE equalization
+%   rxData.BER_noEq        — pre-FEC BER without equalization
+%   rxData.NMSE_LS         — NMSE of LS estimator   (Eq. 32)
+%   rxData.NMSE_MMSE       — NMSE of MMSE estimator (Eq. 32)
+%   rxData.NumPilotBlocks  — number of pilot blocks found
 % =========================================================================
 
+pilotBlockLen = cfg.PilotBlockLen;   % 36 symbols per pilot block
+p_known       = txData.pilotValue;   % (1+j)/sqrt(2)
 
-% Matched Filter + Downsample to Symbol Rate
+%% -----------------------------------------------------------------------
+%  STEP 1: Matched filter — downsample to 1 sample/symbol
+% -----------------------------------------------------------------------
 rxFilter = comm.RaisedCosineReceiveFilter( ...
     'RolloffFactor',         cfg.RolloffFactor, ...
     'FilterSpanInSymbols',   cfg.FilterSpanInSymbols, ...
@@ -43,180 +62,170 @@ filterDelay = cfg.FilterSpanInSymbols / 2;
 rxSymbols   = rxSym_raw(filterDelay+1:end);
 release(rxFilter);
 
-% Align with TX symbols
 txSymbols = txData.txSymbols;
+
+% Align lengths
 minLen    = min(length(rxSymbols), length(txSymbols));
 rxSymbols = rxSymbols(1:minLen);
 txSymbols = txSymbols(1:minLen);
+totalSyms = minLen;
 
-totalSymbols = length(rxSymbols);
+numPilotBlocks = length(pilotPos);
 
-% Pilot Block Detection and Extraction
-
-% DVB-S2 Frame Structure (standard):
-%   PLHEADER    : 90 symbols  (SOF + PLSCODE)
-%   Data slot   : 90 symbols  (payload)
-%   Pilot block : 36 symbols  (inserted every 16 data slots)
+%% -----------------------------------------------------------------------
+%  STEP 2: LS estimation per pilot block (Eq. 12)
 %
-% Position of first pilot block:
-%   PLHeader(90) + 16 slots * 90 symbols = 90 + 1440 = 1530
-%
-% Subsequent pilot blocks every: 36 (pilot) + 1440 (data) = 1476 symbols
-
-pilotBlockLen       = cfg.PilotBlockLen;          % 36
-slotsPerPilot       = cfg.SlotsPerPilot;          % 16
-slotSize            = cfg.SlotSize;               % 90
-PLHeaderLen         = cfg.PLHeaderLen;            % 90
-symbolsPerDataChunk = slotsPerPilot * slotSize;   % 1440
-pilotSpacing        = pilotBlockLen + symbolsPerDataChunk;  % 1476
-
-% Known pilot value (DVB-S2 standard, un-modulated)
-p_known = txData.pilotValue;  % (1+j)/sqrt(2)
-
-% Find all pilot block start positions
-pilotStartPos = [];
-pos = PLHeaderLen + symbolsPerDataChunk + 1;  % 1-indexed MATLAB
-while pos + pilotBlockLen - 1 <= totalSymbols
-    pilotStartPos(end+1) = pos; %#ok<AGROW>
-    pos = pos + pilotSpacing;
-end
-
-numPilotBlocks = length(pilotStartPos);
-
-if numPilotBlocks == 0
-    warning('[RX] No pilot blocks found. Check frame structure parameters.');
-    rxData = build_empty_rxData(cfg, chData);
-    return;
-end
-
-fprintf('    [RX] Pilot blocks found: %d\n', numPilotBlocks);
-
-%  LS Channel Estimation Per Pilot Block (Eq. 12)
-
-% For each pilot block b:
-%   y_pilot = received pilot symbols  [36 x 1]
-%   p_pilot = known pilot symbols     [36 x 1] (all equal to p_known)
-%   h_LS_b  = mean(y_pilot ./ p_pilot)   scalar estimate for this block
-%
-% This gives us one h_LS estimate per pilot block.
-
-% Preallocate
-y_pilot_mean  = zeros(numPilotBlocks, 1);   % mean received pilot (complex)
-p_pilot_mean  = p_known * ones(numPilotBlocks, 1);  % known (constant)
-h_LS_perBlock = zeros(numPilotBlocks, 1);   % LS estimate per block
+%  h_LS_b = mean(y_b / p)
+%  Averaging Np=36 symbols reduces noise variance by factor Np.
+% -----------------------------------------------------------------------
+y_pilot_mean  = zeros(numPilotBlocks, 1);
+p_pilot_mean  = p_known * ones(numPilotBlocks, 1);
+h_LS_perBlock = zeros(numPilotBlocks, 1);
 
 for pb = 1:numPilotBlocks
-    startIdx = pilotStartPos(pb);
-    endIdx   = startIdx + pilotBlockLen - 1;
-    endIdx   = min(endIdx, totalSymbols);
+    startIdx = pilotPos(pb);
+    endIdx   = min(startIdx + pilotBlockLen - 1, totalSyms);
 
-    y_block  = rxSymbols(startIdx:endIdx);          % received pilots
-    p_block  = p_known * ones(length(y_block), 1);  % known pilots
+    if startIdx > totalSyms
+        % Pad with last known estimate if frame is shorter than expected
+        h_LS_perBlock(pb) = h_LS_perBlock(max(pb-1,1));
+        y_pilot_mean(pb)  = y_pilot_mean(max(pb-1,1));
+        continue;
+    end
 
-    % LS estimate (Eq. 12): h_LS = y / p (element-wise, then mean)
-    h_LS_perBlock(pb) = mean(y_block ./ p_block);
-
-    % Store mean received pilot for X_in construction
-    y_pilot_mean(pb) = mean(y_block);
+    y_block           = rxSymbols(startIdx:endIdx);
+    h_LS_perBlock(pb) = mean(y_block ./ p_known);
+    y_pilot_mean(pb)  = mean(y_block);
 end
 
-% Frame-level h_LS: average across all pilot blocks
 h_LS_frame = mean(h_LS_perBlock);
 
-
-% X_in = [ Re(y), Re(p), Re(h_LS), Im(y), Im(p), Im(h_LS) ]
+%% -----------------------------------------------------------------------
+%  STEP 3: MMSE estimation per pilot block (Eq. 17, simplified scalar)
 %
-% Dimensions: [numPilotBlocks x 6]
-% Each row = one pilot block = one time step for BLSTM/GRU
+%  For flat slow-fading:
+%    h_MMSE = W * h_LS
+%    W = R_hh / (R_hh + sigma_n2 / Np)
 %
-% This is exactly what gets fed into the DL model in Python.
+%  R_hh  = E[|h|^2] estimated from pilot blocks (bias-corrected)
+%  sigma_n2 = noise power per symbol = |p|^2 / SNR_linear
+%  Np = pilotBlockLen = 36 (averaging gain already in h_LS_perBlock)
+% -----------------------------------------------------------------------
+snr_lin  = 10^(chData.snr_dB / 10);
+p_power  = abs(p_known)^2;            % = 0.5 for QPSK pilot
+sigma_n2 = p_power / snr_lin;         % noise variance per symbol
 
-Re_y    = real(y_pilot_mean);
-Re_p    = real(p_pilot_mean);
-Re_hLS  = real(h_LS_perBlock);
-Im_y    = imag(y_pilot_mean);
-Im_p    = imag(p_pilot_mean);
-Im_hLS  = imag(h_LS_perBlock);
+% Estimate channel power: R_hh = E[|h_LS|^2] - sigma_n2/Np
+Np   = pilotBlockLen;
+R_hh = mean(abs(h_LS_perBlock).^2) - sigma_n2 / Np;
+R_hh = max(real(R_hh), 1e-12);        % must be positive
 
-X_in = [Re_y, Re_p, Re_hLS, Im_y, Im_p, Im_hLS];
+% Wiener filter coefficient
+W_mmse = R_hh / (R_hh + sigma_n2 / Np);
 
-% True channel label for each pilot block (target for DL training)
-h_true = chData.h_true;
-Re_h_true = real(h_true) * ones(numPilotBlocks, 1);
-Im_h_true = imag(h_true) * ones(numPilotBlocks, 1);
+% Apply scalar MMSE filter to all pilot block estimates
+h_MMSE_perBlock = W_mmse * h_LS_perBlock;
+h_MMSE_frame    = mean(h_MMSE_perBlock);
 
+%% -----------------------------------------------------------------------
+%  STEP 4: X_in feature matrix (Eq. 33)
+%  [Re(y), Re(p), Re(h_LS), Im(y), Im(p), Im(h_LS)] per pilot block
+% -----------------------------------------------------------------------
+X_in = [real(y_pilot_mean), real(p_pilot_mean), real(h_LS_perBlock), ...
+        imag(y_pilot_mean), imag(p_pilot_mean), imag(h_LS_perBlock)];
 
-% Equalize full received signal using frame-level h_LS
-rxEq_LS    = rxSymbols / h_LS_frame;
-rxEq_noEq  = rxSymbols;              % no equalization baseline
+%% -----------------------------------------------------------------------
+%  STEP 5: Equalization
+%  y_eq = y / h_est  (scalar division — flat fading assumption)
+% -----------------------------------------------------------------------
+rxEq_LS   = rxSymbols / h_LS_frame;
+rxEq_MMSE = rxSymbols / h_MMSE_frame;
+rxEq_noEq = rxSymbols;                 % no correction, h_est = 1
 
-% Hard-decision QPSK demodulation
-% QPSK Gray code: bit0 = sign(Re), bit1 = sign(Im)
-demod_fn = @(s) double([real(s) >= 0, imag(s) >= 0]);
+%% -----------------------------------------------------------------------
+%  STEP 6: Pre-FEC BER via QPSK Gray-coded symbol decisions
+%
+%  QPSK decision regions (Gray code):
+%    bit0 = (Re(s) >= 0) → maps to I component
+%    bit1 = (Im(s) >= 0) → maps to Q component
+%
+%  For data symbols only (exclude pilot positions from BER calculation)
+%  Pilots are known and always correct — including them inflates BER.
+% -----------------------------------------------------------------------
 
-txBitPairs   = demod_fn(txSymbols);
-rxBitPairs_LS   = demod_fn(rxEq_LS);
-rxBitPairs_noEq = demod_fn(rxEq_noEq);
-
-txB   = txBitPairs(:);
-rxLS  = rxBitPairs_LS(:);
-rxNoEq = rxBitPairs_noEq(:);
-
-% Align lengths
-minB = min([length(txB), length(rxLS), length(rxNoEq)]);
-txB    = txB(1:minB);
-rxLS   = rxLS(1:minB);
-rxNoEq = rxNoEq(1:minB);
-
-
-% BER and NMSE Computation
-% BER
-BER_LS   = sum(rxLS  ~= txB) / minB;
-BER_noEq = sum(rxNoEq ~= txB) / minB;
-
-% NMSE (Eq. 32 adapted):
-%   NMSE = (1/K) * sum_k |h_true - h_LS_k|^2 / |h_true|^2
-NMSE_LS = mean(abs(h_LS_perBlock - h_true).^2) / (abs(h_true)^2 + eps);
-
-fprintf('    [RX] BER (LS)    = %.6f\n', BER_LS);
-fprintf('    [RX] BER (no eq) = %.6f\n', BER_noEq);
-fprintf('    [RX] NMSE (LS)   = %.6e\n', NMSE_LS);
-
-
-rxData.X_in           = X_in;
-rxData.h_LS_perBlock  = h_LS_perBlock;
-rxData.h_LS_frame     = h_LS_frame;
-rxData.h_true         = h_true;
-rxData.Re_h_true      = Re_h_true;
-rxData.Im_h_true      = Im_h_true;
-rxData.BER_LS         = BER_LS;
-rxData.BER_noEq       = BER_noEq;
-rxData.NMSE_LS        = NMSE_LS;
-rxData.NumPilotBlocks = numPilotBlocks;
-rxData.snr_dB         = chData.snr_dB;
-rxData.rainAtten_dB   = chData.rainAtten_dB;
-rxData.MODCOD         = cfg.CurrentMODCOD;
-rxData.MODCODName     = cfg.CurrentMODCODName;
-rxData.pilotStartPos      = pilotStartPos;
-rxData.PilotBlocksPerFrame = floor(numPilotBlocks / cfg.NumFrames);
-
+% Build data symbol mask — exclude pilot positions
+dataMask = true(totalSyms, 1);
+for pb = 1:numPilotBlocks
+    startIdx = pilotPos(pb);
+    endIdx   = min(startIdx + pilotBlockLen - 1, totalSyms);
+    dataMask(startIdx:endIdx) = false;
+end
+% Also exclude PLHEADER
+plhLen = cfg.PLHeaderLen;
+if plhLen < totalSyms
+    dataMask(1:plhLen) = false;
 end
 
-%% Helper: empty struct on failure
-function rxData = build_empty_rxData(cfg, chData)
-    rxData.X_in           = [];
-    rxData.h_LS_perBlock  = [];
-    rxData.h_LS_frame     = NaN;
-    rxData.h_true         = chData.h_true;
-    rxData.Re_h_true      = [];
-    rxData.Im_h_true      = [];
-    rxData.BER_LS         = NaN;
-    rxData.BER_noEq       = NaN;
-    rxData.NMSE_LS        = NaN;
-    rxData.NumPilotBlocks = 0;
-    rxData.snr_dB         = chData.snr_dB;
-    rxData.rainAtten_dB   = chData.rainAtten_dB;
-    rxData.MODCOD         = cfg.CurrentMODCOD;
-    rxData.MODCODName     = cfg.CurrentMODCODName;
-    rxData.pilotStartPos  = [];
+% Apply mask
+txData_syms   = txSymbols(dataMask);
+rxData_LS     = rxEq_LS(dataMask);
+rxData_MMSE   = rxEq_MMSE(dataMask);
+rxData_noEq   = rxEq_noEq(dataMask);
+
+if isempty(txData_syms)
+    % Fallback: use all symbols if mask removes everything
+    txData_syms = txSymbols;
+    rxData_LS   = rxEq_LS;
+    rxData_MMSE = rxEq_MMSE;
+    rxData_noEq = rxEq_noEq;
+end
+
+% Gray-coded QPSK demodulation
+% TX symbols are the reference — compare sign of I and Q components
+qpsk_decide = @(s) [real(s) >= 0, imag(s) >= 0];
+
+txBits_sym  = qpsk_decide(txData_syms);   txBits_sym  = txBits_sym(:);
+rxBits_LS   = qpsk_decide(rxData_LS);     rxBits_LS   = rxBits_LS(:);
+rxBits_MMSE = qpsk_decide(rxData_MMSE);   rxBits_MMSE = rxBits_MMSE(:);
+rxBits_noEq = qpsk_decide(rxData_noEq);   rxBits_noEq = rxBits_noEq(:);
+
+% Align lengths
+nb = min([length(txBits_sym), length(rxBits_LS), ...
+          length(rxBits_MMSE), length(rxBits_noEq)]);
+
+BER_LS   = sum(txBits_sym(1:nb) ~= rxBits_LS(1:nb))   / nb;
+BER_MMSE = sum(txBits_sym(1:nb) ~= rxBits_MMSE(1:nb)) / nb;
+BER_noEq = sum(txBits_sym(1:nb) ~= rxBits_noEq(1:nb)) / nb;
+
+%% -----------------------------------------------------------------------
+%  STEP 7: NMSE (Eq. 32)
+%
+%  NMSE = mean_b(|h_true - h_est_b|^2) / |h_true|^2
+%
+%  h_true = h_tilde (scalar for this frame — same channel for all blocks)
+%  Averaging over pilot blocks gives a per-frame NMSE estimate.
+% -----------------------------------------------------------------------
+h_true   = chData.h_tilde;
+h_power  = abs(h_true)^2 + eps;
+
+NMSE_LS   = mean(abs(h_LS_perBlock   - h_true).^2) / h_power;
+NMSE_MMSE = mean(abs(h_MMSE_perBlock - h_true).^2) / h_power;
+
+%% Pack output
+rxData.X_in            = X_in;
+rxData.h_LS_perBlock   = h_LS_perBlock;
+rxData.h_MMSE_perBlock = h_MMSE_perBlock;
+rxData.h_LS_frame      = h_LS_frame;
+rxData.h_MMSE_frame    = h_MMSE_frame;
+rxData.BER_LS          = BER_LS;
+rxData.BER_MMSE        = BER_MMSE;
+rxData.BER_noEq        = BER_noEq;
+rxData.NMSE_LS         = NMSE_LS;
+rxData.NMSE_MMSE       = NMSE_MMSE;
+rxData.NumPilotBlocks  = numPilotBlocks;
+rxData.rxSymbols       = rxSymbols;
+rxData.txSymbols       = txSymbols;
+rxData.W_mmse          = W_mmse;
+rxData.R_hh            = R_hh;
+rxData.sigma_n2        = sigma_n2;
 end

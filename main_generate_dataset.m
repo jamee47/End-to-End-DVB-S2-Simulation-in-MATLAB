@@ -1,145 +1,177 @@
 clc; clearvars; close all;
+% =========================================================================
 % MAIN SCRIPT: DVB-S2 Dataset Generation for DL-Based Channel Estimation
+% =========================================================================
 % Author  : Mohtasim Al Jamee
-% Purpose : Generate pilot-based dataset from DVB-S2 transmission over
-%           a tropical (high-fading) satellite channel for training
-%           BLSTM and GRU channel estimators in Python.
 %
-% Structure:
-%    Configuration  (edit parameters here)
-%    Transmitter    (calls tx_dvbs2.m)
-%    Channel        (calls channel_tropical.m)
-%    Receiver       (calls rx_dvbs2.m)
-%    Dataset Export (saves CSV)
+% Pipeline per frame (inner loop):
+%   tx_dvbs2_frame  →  channel_tropical  →  rx_dvbs2_frame
 %
-% Paper Reference:
-%   Awad et al., "End-to-end DVB-S2X system design with DL-based channel
-%   estimation over satellite fading channels at Ka-band", Computer
-%   Networks, 2023.
+% Each frame gets a unique channel realisation (A_p, phi resampled).
+% BER/NMSE evaluation runs a separate SNR sweep after dataset generation.
+% =========================================================================
 
-%%
-
-%  Edit all simulation parameters here
-
+%% -----------------------------------------------------------------------
+%  SECTION 1: CONFIGURATION
+% -----------------------------------------------------------------------
 cfg = struct();
 
 % --- Frame parameters ---
-cfg.FECFrame         = 'normal';     % 'normal'=64800 bits, 'short'=16200 bits
-cfg.NumFrames        = 1;         % Total frames to generate
+cfg.FECFrame         = 'short';
+cfg.NumFrames        = 500;         % frames per MODCOD for dataset
+cfg.NumEvalFrames    = 100;         % frames averaged per SNR point in eval
 
-% MODCODs to simulate (iterated in loop)
-% Paper uses: QPSK 11/20, 32APSK 140/180, 256APSK 128/180
-% MATLAB dvbs2WaveformGenerator MODCOD index reference:
-%   MODCOD=2  -> QPSK 1/3  (closest short-frame low rate)
-%   MODCOD=7  -> QPSK 11/20 (short frame)
-%   MODCOD=18 -> 8PSK (stepping stone)
-%   MODCOD=20 -> 16APSK
-%   MODCOD=24 -> 32APSK
-% We use indices that are valid for short frames:
-cfg.MODCODs          = [2];         % QPSK 1/3 (short frame, MODCOD index 2)
+% --- MODCODs ---
+cfg.MODCODs          = [2];
 cfg.MODCODNames      = {'QPSK_1_3'};
 
 % --- Waveform parameters ---
-cfg.RolloffFactor        = 0.20;    % Paper uses 20%
+cfg.RolloffFactor        = 0.20;
 cfg.FilterSpanInSymbols  = 10;
 cfg.SamplesPerSymbol     = 4;
-cfg.HasPilots            = true;    % MUST be true for pilot-based estimation
+cfg.HasPilots            = true;
+cfg.DFL                  = 3008;
 
-% --- Channel parameters (Tropical - Penang, Malaysia) ---
-cfg.Frequency_GHz    = 20;          % Ka-band downlink
-cfg.Latitude         = 5.17;        % Penang latitude (deg N)
-cfg.Altitude_m       = 57;          % Penang altitude (m)
-cfg.RainfallRate     = 130;         % R_0.01 mm/h (tropical)
-cfg.ElevationAngle   = 45;          % degrees
-cfg.IsoHeight_km     = 4.5;         % 0 deg C isotherm height (km)
+% --- Channel parameters ---
+cfg.Frequency_GHz    = 20;
+cfg.Latitude         = 5.17;
+cfg.Altitude_m       = 57;
+cfg.ElevationAngle   = 45;
+cfg.Polarization     = 'V';
 
-% --- Link budget parameters (for b and b_max, Eq. 9 & 10) ---
-cfg.G_s_dBi          = 52.0;        % satellite TX antenna gain (dBi)
-cfg.G_r_dBi          = 41.7;        % receiver antenna gain (dBi)
-cfg.NoiseBW_Hz       = 50e6;        % noise bandwidth (Hz)
-cfg.NoiseTemp_K      = 207.0;       % receiver noise temperature (K)
-cfg.Theta3dB_deg     = 0.4;         % satellite beam 3dB angle (deg)
-cfg.BeamOffset_deg   = 0.0;         % terminal angle from beam centre (deg)
+% --- Link budget ---
+cfg.G_s_dBi          = 52.0;
+cfg.G_r_dBi          = 41.7;
+cfg.NoiseBW_Hz       = 50e6;
+cfg.NoiseTemp_K      = 207.0;
+cfg.Theta3dB_deg     = 0.4;
+cfg.BeamOffset_deg   = 0.0;
 
-% --- JSON from get_parameters.py (set path or leave empty for fallback) ---
-cfg.ParamsFile       = 'Parameters/bdsat.json';  % set '' to use fallback
-cfg.Polarization     = 'V';         % Vertical
+% --- ITU-R JSON from get_parameters.py ---
+cfg.ParamsFile       = 'Parameters/bdsat.json';
 
-% --- SNR range for dataset (paper trains at 30 dB, tests across range) ---
-cfg.SNR_train_dB     = 30;          % Fixed training SNR (as per paper)
-cfg.SNR_test_range   = 5:5:30;      % Test SNR sweep for BER/NMSE evaluation
+% --- SNR ---
+cfg.SNR_train_dB     = 30;
+cfg.SNR_test_range   = 5:5:30;
 
-% --- Pilot structure (DVB-S2 standard) ---
-cfg.PilotBlockLen    = 36;          % symbols per pilot block
-cfg.SlotsPerPilot    = 16;          % data slots between pilot blocks
-cfg.SlotSize         = 90;          % symbols per slot
-cfg.PLHeaderLen      = 90;          % PLHEADER length in symbols
-cfg.Visualize  = true;
-cfg.VisualizeFrame = 'random';
+% --- DVB-S2 pilot structure (standard) ---
+cfg.PilotBlockLen    = 36;
+cfg.SlotsPerPilot    = 16;
+cfg.SlotSize         = 90;
+cfg.PLHeaderLen      = 90;
 
 % --- Output ---
 cfg.OutputDir        = 'dataset_output';
-if ~exist(cfg.OutputDir, 'dir'), mkdir(cfg.OutputDir); end
+if ~exist(cfg.OutputDir,'dir'), mkdir(cfg.OutputDir); end
 
-%% 
-%  LOAD ITU-R PARAMETERS (once, before the loop)
-%  Reads get_parameters.py JSON output into itu struct.
-%  Pass itu into channel_tropical() each iteration.
+%% -----------------------------------------------------------------------
+%  Seed RNG once — channel_tropical uses rand() per frame
+% -----------------------------------------------------------------------
+rng('shuffle');
 
+%% -----------------------------------------------------------------------
+%  Load ITU-R parameters once (location/frequency fixed for all frames)
+% -----------------------------------------------------------------------
 fprintf('>>> Loading ITU-R parameters...\n');
 itu = load_itu_params(cfg.ParamsFile);
 
 fprintf('=============================================================\n');
 fprintf(' DVB-S2 Dataset Generator — Tropical Fading Channel\n');
-fprintf(' Frames: %d | Frame Type: %s | MODCODs: %d\n', ...
-    cfg.NumFrames, cfg.FECFrame, length(cfg.MODCODs));
+fprintf(' Frames: %d per MODCOD | FECFrame: %s | EvalFrames: %d/SNR\n', ...
+    cfg.NumFrames, cfg.FECFrame, cfg.NumEvalFrames);
 fprintf('=============================================================\n\n');
 
-%%
-
-
-allResults = struct();
+%% -----------------------------------------------------------------------
+%  SECTION 2-4: MAIN LOOP — dataset generation
+% -----------------------------------------------------------------------
+allResults  = struct();
+allPilotPos = struct();   % pilot positions per MODCOD — reused in eval
 
 for modIdx = 1:length(cfg.MODCODs)
 
     cfg.CurrentMODCOD     = cfg.MODCODs(modIdx);
     cfg.CurrentMODCODName = cfg.MODCODNames{modIdx};
 
-    fprintf('>>> Processing MODCOD %d (%s)...\n', ...
-        cfg.CurrentMODCOD, cfg.CurrentMODCODName);
+    fprintf('>>> MODCOD %d (%s) — generating %d frames...\n', ...
+        cfg.CurrentMODCOD, cfg.CurrentMODCODName, cfg.NumFrames);
 
-    %%  TRANSMITTER
-    fprintf('    [TX] Generating DVB-S2 waveform...\n');
-    txData = tx_dvbs2(cfg);
+    %% Detect pilot positions once from a reference frame
+    fprintf('    [TX] Detecting pilot structure...\n');
+    txRef    = tx_dvbs2_frame(cfg);
+    pilotPos = detect_pilot_positions(txRef, cfg);
 
-    %%  CHANNEL — Tropical High-Fading
-    fprintf('    [CH] Applying tropical fading channel (SNR=%.0f dB)...\n', ...
-        cfg.SNR_train_dB);
-    chData = channel_tropical(txData, cfg, cfg.SNR_train_dB, itu);
+    if isempty(pilotPos)
+        error('[MAIN] No pilots detected for MODCOD %d. Check HasPilots=true.', ...
+            cfg.CurrentMODCOD);
+    end
 
-    %%  RECEIVER — Pilot Extraction + LS + BER/NMSE
-    fprintf('    [RX] Extracting pilots, computing LS estimation...\n');
-    rxData = rx_dvbs2(txData, chData, cfg);
+    % Store pilot positions for evaluation step
+    allPilotPos.(cfg.CurrentMODCODName) = pilotPos;
+    numPilotBlocks = length(pilotPos);
+
+    %% Pre-allocate dataset matrix
+    numFeatureCols = numPilotBlocks * 6;
+    % Columns: features | Re_hk Im_hk Re_htilde Im_htilde SNR RainAtten BER NMSE
+    numMetaCols    = 10;
+    datasetMatrix  = zeros(cfg.NumFrames, numFeatureCols + numMetaCols);
+
+    %% Inner loop — one unique frame per iteration
+    fprintf('    [LOOP] Frames: ');
+    for frameIdx = 1:cfg.NumFrames
+
+        if mod(frameIdx, 50) == 0
+            fprintf('%d ', frameIdx);
+        end
+
+        % 1. Transmit one frame
+        txFrame = tx_dvbs2_frame(cfg);
+
+        % 2. Apply unique channel realisation
+        chFrame = channel_tropical(txFrame, cfg, cfg.SNR_train_dB, itu);
+
+        % 3. Receiver — pilot extraction, LS estimation, BER, NMSE
+        rxFrame = rx_dvbs2_frame(txFrame, chFrame, cfg, pilotPos);
+
+        % 4. Build dataset row
+        featureRow = reshape(rxFrame.X_in', 1, numFeatureCols);
+        datasetMatrix(frameIdx, :) = [
+            featureRow, ...
+            real(chFrame.h_true),  imag(chFrame.h_true), ...
+            real(chFrame.h_tilde), imag(chFrame.h_tilde), ...
+            chFrame.snr_dB,        chFrame.rainAtten_dB, ...
+            rxFrame.BER_LS,        rxFrame.NMSE_LS, ...
+            rxFrame.BER_MMSE,      rxFrame.NMSE_MMSE
+        ];
+    end
+    fprintf('\n');
+
+    %% Per-MODCOD summary
+    berCol  = datasetMatrix(:, numFeatureCols + 7);
+    nmseCol = datasetMatrix(:, numFeatureCols + 8);
+    rainCol = datasetMatrix(:, numFeatureCols + 6);
+    fprintf('    [DONE] %s | Mean BER=%.4f | Mean NMSE=%.4e | Rain=[%.2f,%.2f] dB\n', ...
+        cfg.CurrentMODCODName, mean(berCol), mean(nmseCol), ...
+        min(rainCol), max(rainCol));
 
     %% Store results
-    allResults.(cfg.CurrentMODCODName) = rxData;
-
-    fprintf('    [OK] MODCOD %s done. Pilot blocks found: %d\n\n', ...
-        cfg.CurrentMODCODName, rxData.NumPilotBlocks);
+    allResults.(cfg.CurrentMODCODName).datasetMatrix  = datasetMatrix;
+    allResults.(cfg.CurrentMODCODName).numPilotBlocks = numPilotBlocks;
+    allResults.(cfg.CurrentMODCODName).pilotPos       = pilotPos;
+    allResults.(cfg.CurrentMODCODName).MODCOD         = cfg.CurrentMODCOD;
+    allResults.(cfg.CurrentMODCODName).MODCODName     = cfg.CurrentMODCODName;
+    allResults.(cfg.CurrentMODCODName).snr_dB         = cfg.SNR_train_dB;
 end
 
-%% 
-%  DATASET EXPORT TO CSV
+%% -----------------------------------------------------------------------
+%  SECTION 5: EXPORT DATASET TO CSV
+% -----------------------------------------------------------------------
+fprintf('\n>>> Exporting dataset to CSV...\n');
+export_dataset_csv(allResults, cfg);
 
-fprintf('>>> Exporting dataset to CSV...\n');
-export_and_evaluate(allResults, cfg);
+%% -----------------------------------------------------------------------
+%  SECTION 6: BER / NMSE EVALUATION ACROSS SNR RANGE
+% -----------------------------------------------------------------------
+fprintf('\n>>> Running BER/NMSE evaluation...\n');
+evaluate_ber_nmse(cfg, itu, allPilotPos);
 
-% BER/NMSE vs SNR EVALUATION PLOTS
-
-fprintf('>>> Running BER/NMSE evaluation across SNR range...\n');
-evaluate_ber_nmse(cfg);
-
-fprintf('\n=== Dataset generation complete. Files saved in: %s ===\n', ...
-    cfg.OutputDir);
-
-visualize_frame(txData, chData,rxData, cfg);
+fprintf('\n=== Complete. Files saved in: %s ===\n', cfg.OutputDir);

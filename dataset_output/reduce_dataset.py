@@ -66,7 +66,7 @@ def col_group(name):
     if name.startswith('H_LS_im'):     return 'H_LS_im'
     return 'metadata'                                        # scalars
 
-drop_prefixes = ('data_re_', 'data_im_')
+drop_prefixes = ('data_re_', 'data_im_','plheader_re','plheader_im','H_LS_re','H_LS_im')
 keep_cols     = [c for c in all_cols if not c.startswith(drop_prefixes)]
 drop_cols     = [c for c in all_cols if     c.startswith(drop_prefixes)]
 
@@ -92,7 +92,7 @@ print(f'    Rows (frames): {num_rows:,}')
 
 # ── Step 4: Chunked read → write reduced CSV ───────────────────────────────
 print(f'\n[4] Processing in chunks of {CHUNK_SIZE} rows ...')
-print(f'    Writing reduced CSV → {OUTPUT_CSV}')
+print(f'    Writing reduced CSV -> {OUTPUT_CSV}')
 
 # usecols filter avoids loading dropped columns into memory entirely
 usecols_filter = lambda col: not col.startswith(drop_prefixes)
@@ -127,7 +127,7 @@ for chunk in pd.read_csv(
 print()   # newline after progress
 
 # ── Step 5: Save NPZ ───────────────────────────────────────────────────────
-print(f'\n[5] Building NumPy arrays and saving → {OUTPUT_NPZ}')
+print(f'\n[5] Building NumPy arrays and saving -> {OUTPUT_NPZ}')
 
 df = pd.concat(all_chunks, ignore_index=True)
 
@@ -149,7 +149,7 @@ H_true_im   = df['H_true_im'].values.astype(np.float32)   # [N]
 snr_dB      = df['snr_dB'].values.astype(np.float32)
 nVar        = df['nVar'].values.astype(np.float32)
 modcod      = df['modcod'].values.astype(np.int32)
-Kfactor_dB  = df['Kfactor_dB'].values.astype(np.float32)
+rainAtt_dB  = df['rainAtt_dB'].values.astype(np.float32)
 
 # Convenience: recombine real+imag into complex pilot sequence per block
 # H_LS_complex: [N × K] complex — direct BLSTM input
@@ -179,7 +179,7 @@ np.savez_compressed(
     snr_dB           = snr_dB,             # [N]
     nVar             = nVar,               # [N]
     modcod           = modcod,             # [N]
-    Kfactor_dB       = Kfactor_dB,        # [N]
+    rainAtt_dB       = rainAtt_dB,        # [N]
 )
 
 # ── Step 6: Summary ────────────────────────────────────────────────────────
@@ -204,7 +204,7 @@ print(f'  H_true    (re/im)  : {H_true_re.shape}  /  {H_true_im.shape}')
 print(f'  snr_dB             : {snr_dB.shape}')
 print(f'  nVar               : {nVar.shape}')
 print(f'  modcod             : {modcod.shape}')
-print(f'  Kfactor_dB         : {Kfactor_dB.shape}')
+print(f'  rainAtt_dB         : {rainAtt_dB.shape}')
 
 print(f'\nUsage in Python:')
 print(f'  data = np.load("{OUTPUT_NPZ}")')

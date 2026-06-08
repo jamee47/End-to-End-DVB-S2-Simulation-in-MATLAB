@@ -113,7 +113,7 @@ fprintf('    [CH] A_p   = %.3f dB  (p = %.3f%% of year)\n', A_p_dB, p_pct);
 f_Hz   = f_GHz * 1e9;
 lambda = 3e8 / f_Hz;
 d0     = 35788e3;                        % GEO altitude (m)
-G_R    = 10^(cfg.G_r_dBi / 10);         % receiver gain (linear)
+G_R    = 10^(cfg.G_r_dBi / 10);          % receiver gain (linear)
 k_b    = 1.38e-23;                       % Boltzmann constant
 
 b_max  = (lambda/(4*pi))^2 * (1/d0^2) * (G_R/(k_b * cfg.NoiseBW_Hz * cfg.NoiseTemp_K));

@@ -1,0 +1,1 @@
+{"num_pilot_blocks":5,"num_features":6,"label_cols":["Re_hk","Im_hk"],"reshape_cmd":"X.reshape(-1, 5, 6)","total_rows":2,"feature_description":"pb{N}_{Re|Im}_{y|p|hLS}"}
