@@ -1,6 +1,4 @@
 % ========================= DVB-S2 Per-MODCOD Dataset Generator =========================
-% Generates one CSV file per selected MODCOD, each containing pilots-only rows
-% at deterministic Es/No levels (analogous to the 2ASK ATG generator structure).
 %
 % OUTPUT per row:
 %   [ metadata columns ] + [ pilot_re_1…MAX_NP ] + [ pilot_im_1…MAX_NP ] + [ pilot_mask_1…MAX_NP ]
@@ -14,32 +12,13 @@
 % CHANNEL:  ITU-R P.618 rain-fading + AWGN (same model as dataset_gen.m,
 %           Eq. 7-11).  Es/No is swept deterministically (samples_per_esno
 %           frames per level), in the same spirit as ASK2_data_generation.m.
-% ========================================================================================
+
 
 clc; clearvars; close all;
 
-%% ═══════════════════════════════════════════════════════════════════════════
-%  SEC 1 — USER KNOBS  ◄ EDIT ONLY THIS SECTION FOR NORMAL USE ►
-%% ═══════════════════════════════════════════════════════════════════════════
+%% 
+% USER KNOBS  ◄ EDIT ONLY THIS SECTION FOR NORMAL USE ►
 
-% ── MODCOD selection ─────────────────────────────────────────────────────────
-%   Pick up to 8 IDs from the table below.  One CSV is generated per ID.
-%
-%   ID │ Modulation │ Code Rate │ Np (normal frame) │ Approx min Es/No
-%  ────┼────────────┼───────────┼────────────────────┼─────────────────
-%    1 │ QPSK       │ 1/4       │        792         │  -2.4 dB
-%    2 │ QPSK       │ 1/2       │        792         │   0.0 dB
-%    3 │ QPSK       │ 3/4       │        792         │   1.8 dB
-%    4 │ 8PSK       │ 2/3       │        540         │   4.0 dB
-%    5 │ 8PSK       │ 3/4       │        504         │   5.0 dB
-%    6 │ 8PSK       │ 5/6       │        468         │   6.0 dB
-%    7 │ 16APSK     │ 2/3       │        396         │   7.5 dB
-%    8 │ 16APSK     │ 3/4       │        360         │   8.8 dB
-%    9 │ 16APSK     │ 5/6       │        324         │   9.8 dB
-%   10 │ 32APSK     │ 3/4       │        288         │  12.0 dB
-%   11 │ 32APSK     │ 5/6       │        252         │  13.5 dB
-%   12 │ 32APSK     │ 8/9       │        216         │  15.0 dB
-%   13 │ 32APSK     │ 9/10      │        216         │  16.0 dB
 modcod_selection = [2, 3, 5, 8];    % ← replace with your 8 IDs
 
 % ── Es/No sweep ──────────────────────────────────────────────────────────────
@@ -73,9 +52,9 @@ enableDebugPrint = true;
 
 itu.channel_type        = 'tropical';
 itu.site                = 'Penang, Malaysia';
-itu.Frequency_GHz       = 20;
-itu.Latitude_deg        = 5.17;
-itu.Longitude_deg       = 100.4;
+itu.Frequency_GHz       = 18;
+itu.Latitude_deg        = 23.999324;
+itu.Longitude_deg       = 90.389147;
 itu.Altitude_m          = 57;
 itu.ElevationAngle_deg  = 45;
 itu.Polarization        = 'V';
@@ -96,9 +75,8 @@ CONST.c_light = 3e8;
 CONST.kb      = 1.38064852e-23;
 
 
-%% ═══════════════════════════════════════════════════════════════════════════
-%  END OF USER-EDITABLE SECTIONS
-%% ═══════════════════════════════════════════════════════════════════════════
+
+
 
 if RNG_SEED ~= 0, rng(RNG_SEED); end
 
@@ -440,9 +418,9 @@ fprintf('  Columns/row : %d meta + %d pilot = %d total  (per-MODCOD MAX_NP)\n', 
 fprintf('══════════════════════════════════════════════════════\n');
 
 
-%% ══════════════════════════════════════════════════════════════════════════
-%  HELPER FUNCTIONS  (identical to dataset_gen.m — kept local for portability)
-%% ══════════════════════════════════════════════════════════════════════════
+%% 
+%  HELPER FUNCTIONS  
+
 
 
 function dfl = getDFL(modCod, fecFrame)
@@ -467,8 +445,3 @@ function nVarEst = pilotNoiseVarEstimate(rxFrame, pilotInd, refPilots)
     sigPow    = abs(mean(rxPilots .* conj(refPilots(:)))).^2;
     nVarEst   = max(0, totalPow - sigPow);
 end
-
-
-
-
-
