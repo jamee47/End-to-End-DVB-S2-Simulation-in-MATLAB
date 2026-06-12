@@ -1,0 +1,13 @@
+function dfl = getDFL(modCod, fecFrame)
+    % GETDFL  Data field length (DFL) for a given MODCOD + FEC frame type.
+    if strcmp(fecFrame, 'normal')
+        nDefVal = [16008 21408 25728 32208 38688 43040 48408 51648 53840 57472 ...
+                   58192 38688 43040 48408 53840 57472 58192 43040 48408 51648 ...
+                   53840 57472 58192 48408 51648 53840 57472 58192] - 80;
+    else
+        nDefVal = [3072 5232 6312 7032 9552 10632 11712 12432 13152 14232 0 ...
+                   9552 10632 11712 13152 14232 0 10632 11712 12432 13152 14232 ...
+                   0 11712 12432 13152 14232 0] - 80;
+    end
+    dfl = nDefVal(modCod);
+end
