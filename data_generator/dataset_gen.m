@@ -19,12 +19,12 @@ clc; clearvars; close all;
 %% 
 % USER KNOBS  ◄ EDIT ONLY THIS SECTION FOR NORMAL USE ►
 
-modcod_selection = [2, 3, 5, 8];    % ← replace with your 8 IDs
+modcod_selection = [2, 9, 15, 16, 19, 22, 24, 26];    % ← replace with your 8 IDs
 
 % ── Es/No sweep ──────────────────────────────────────────────────────────────
 %   Deterministic: samples_per_esno frames are generated for EACH Es/No level.
 esno_values     = -2:2:18;          % dB  (same style as ASK2 snr_values)
-samples_per_esno = 2000;            % frames per Es/No level per MODCOD
+samples_per_esno = 1;            % frames per Es/No level per MODCOD
 
 % ── Output ───────────────────────────────────────────────────────────────────
 outDir = '../dataset_output';       % folder (created if absent)
